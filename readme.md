@@ -15,6 +15,7 @@ Perform active stealth scans, gather passive OSINT, and receive CVE suggestions 
 - ✅ Codename Generator for Operator Identity
 - ✅ Clean HTML + Markdown Report Generation
 - ✅ Subdomain Resolution Support (Passive Mode)
+- ✅ CIDR Range Scanning
 
 ---
 
@@ -33,6 +34,11 @@ python3 nakulascan.py -t example.com --passive
 ### Scan From List:
 ```bash
 sudo python3 nakulascan.py -T examples/targets.txt --scan fin
+```
+
+### Scan a CIDR Range:
+```bash
+sudo python3 nakulascan.py -c 192.168.1.0/24 --scan fin
 ```
 
 ### Save + Resume a Scan:
