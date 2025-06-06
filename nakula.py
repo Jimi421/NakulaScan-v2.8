@@ -10,6 +10,7 @@ import concurrent.futures
 import json
 import ipaddress
 import logging
+import sys
 from scapy.all import IP, TCP, ICMP, sr1, conf
 from plugin_loader import load_plugins
 from resume_manager import ResumeManager
