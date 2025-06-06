@@ -93,3 +93,22 @@ def generate_md_report(data, target, codename):
         f.write("\n".join(lines))
 
     return filename
+
+import csv
+
+
+def generate_csv_report(data, target, codename):
+    timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    filename = f"reports/NakulaScan_{target}_{timestamp}.csv"
+    Path("reports").mkdir(exist_ok=True)
+
+    with open(filename, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["IP", "Port", "Service", "Status", "Banner", "OS Guess", "Scan Type", "CVE Suggestions"])
+        for entry in data:
+            cves = ", ".join(entry.get('cve_suggestions', [])) if entry.get('cve_suggestions') else "None"
+            writer.writerow([
+                entry['ip'], entry['port'], entry['service'], entry['status'],
+                entry['banner'], entry['os_guess'], entry['scan_type'], cves
+            ])
+    return filename

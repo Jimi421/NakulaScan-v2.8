@@ -4,13 +4,15 @@ import random
 import threading
 import time
 import os
+import concurrent.futures
 import json
 import ipaddress
 import logging
 from scapy.all import IP, TCP, ICMP, sr1, conf
+from plugin_loader import load_plugins
 from resumemanager import ResumeManager
 from passive_recon import PassiveRecon
-from report_writer import generate_html_report, generate_md_report
+from report_writer import generate_html_report, generate_md_report, generate_csv_report
 from cve_suggester import suggest_cves
 
 conf.verb = 0
@@ -73,6 +75,18 @@ def stealth_tcp_scan(ip, port, scan_type):
         logging.error(f"Stealth scan error on {ip}:{port} - {e}")
     return None
 
+def udp_scan(ip, port):
+    try:
+        pkt = IP(dst=ip)/UDP(dport=port)
+        resp = sr1(pkt, timeout=1, verbose=0)
+        if resp is None:
+            return True
+        if resp.haslayer(ICMP) and resp.getlayer(ICMP).type == 3:
+            return False
+    except Exception as e:
+        logging.error(f"UDP scan error on {ip}:{port} - {e}")
+    return None
+
 parser = argparse.ArgumentParser(description="NakulaScan - Elite Red Team Recon Platform")
 parser.add_argument("-t", "--target", help="Target IP or hostname")
 parser.add_argument("-T", "--targetlist", help="File containing list of targets")
@@ -82,10 +96,14 @@ parser.add_argument("--scan", choices=["fin", "null", "xmas"], help="Stealth TCP
 parser.add_argument("--passive", action="store_true", help="Perform passive OSINT recon only (no active scan)")
 parser.add_argument("--save", help="File path to save scan/resume state as JSON")
 parser.add_argument("--resume", help="File path to resume scan state from JSON")
+parser.add_argument('--udp', action='store_true', help='Enable UDP scanning')
+parser.add_argument('--enable-plugins', action='store_true', help='Run plugins from plugins directory')
 parser.add_argument("--auto-resume", action="store_true", help="Automatically resume on crash using last save file")
 parser.add_argument("--nobanner", action="store_true", help="Suppress ASCII banner")
 args = parser.parse_args()
 
+plugins = load_plugins() if args.enable_plugins else []
+plugin_data = []
 if not args.nobanner:
     print(banner())
 codename = generate_codename()
@@ -128,7 +146,7 @@ if args.resume or args.auto_resume:
     resume_mgr = ResumeManager(resume_file)
     resume_mgr.load()
 
-ports = list(PORT_SERVICES.keys()) if args.ports == "common" else list(range(1, 1025))
+ports = list(PORT_SERVICES.keys()) if args.ports == "common" else list(range(1, 65536))
 if resume_mgr:
     targets, ports = resume_mgr.get_state(targets, ports)
 
@@ -150,12 +168,15 @@ def scan_target(ip):
                 status = stealth_tcp_scan(ip, port, args.scan)
                 if status is None:
                     continue
+            elif args.udp:
+                status = udp_scan(ip, port)
+                if status is None:
+                    continue
             else:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.settimeout(0.5)
                 status = (s.connect_ex((ip, port)) == 0)
                 s.close()
-
             if status:
                 service = PORT_SERVICES.get(port, "Unknown")
                 banner = grab_banner(ip, port) if not args.scan else ""
@@ -174,32 +195,36 @@ def scan_target(ip):
                     'scan_type': args.scan.upper() if args.scan else 'CONNECT',
                     'cve_suggestions': cves
                 })
+                for plugin in plugins:
+                    try:
+                        pdata = plugin.run(ip, port, banner)
+                        if pdata:
+                            plugin_data.extend(pdata)
+                    except Exception as e:
+                        logging.error(f"Plugin error {plugin}: {e}")
             if resume_mgr and args.save:
                 resume_mgr.save()
         except Exception as e:
-            logging.error(f"Error scanning {ip}:{port} - {e}")
-            continue
 
-threads = []
-for t in targets:
-    th = threading.Thread(target=scan_target, args=(t,))
-    th.start()
-    threads.append(th)
-    time.sleep(0.1)
-for th in threads:
-    th.join()
+            logging.error(f"Error scanning {ip}:{port} - {e}")
+with concurrent.futures.ThreadPoolExecutor(max_workers=100) as executor:
+    for t in targets:
+        executor.submit(scan_target, t)
 
 if resume_mgr and args.save:
     resume_mgr.save()
-    print(f"{CYAN}[+] Scan state saved to {resume_mgr.file}{RESET}")
-
 os.makedirs("reports", exist_ok=True)
 with open("reports/active_results.json", "w") as af:
     json.dump(results, af, indent=4)
+if plugin_data:
+    with open("reports/plugin_results.json", "w") as pf:
+        json.dump(plugin_data, pf, indent=4)
 print(f"\n{CYAN}[+] Active scan complete. Results saved to reports/active_results.json{RESET}")
 
 if results and args.target:
     html_path = generate_html_report(results, args.target, codename)
     md_path = generate_md_report(results, args.target, codename)
     print(f"{CYAN}[+] HTML report written to {html_path}{RESET}")
+    csv_path = generate_csv_report(results, args.target, codename)
+    print(f"{CYAN}[+] CSV report written to {csv_path}{RESET}")
     print(f"{CYAN}[+] Markdown report written to {md_path}{RESET}")
