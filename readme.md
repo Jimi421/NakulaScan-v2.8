@@ -11,6 +11,7 @@ Perform active stealth scans, gather passive OSINT, and receive CVE suggestions 
 - ✅ Stealth TCP Scan Modes (FIN, NULL, XMAS)
 - ✅ Passive Recon: WHOIS, DNS, ASN, GeoIP
 - ✅ CVE Matching from Service Banners (Offline)
+- ✅ Protocol-aware Banner Grabbing (HTTP/HTTPS, FTP, SSH, etc.)
 - ✅ Save & Resume Mid-Scan
 - ✅ Codename Generator for Operator Identity
 - ✅ Clean HTML + Markdown Report Generation
