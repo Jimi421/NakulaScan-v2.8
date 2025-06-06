@@ -6,13 +6,15 @@ import time
 import os
 import json
 import ipaddress
-from scapy.all import *
+import logging
+from scapy.all import IP, TCP, ICMP, sr1, conf
 from resumemanager import ResumeManager
 from passive_recon import PassiveRecon
 from report_writer import generate_html_report, generate_md_report
 from cve_suggester import suggest_cves
 
 conf.verb = 0
+logging.basicConfig(level=logging.ERROR)
 
 # CLI colors
 RED = "\033[91m"
@@ -47,7 +49,8 @@ def grab_banner(ip, port):
         with socket.create_connection((ip, port), timeout=1) as s:
             s.settimeout(1)
             return s.recv(1024).decode(errors='ignore').strip()
-    except:
+    except Exception as e:
+        logging.error(f"Failed to grab banner from {ip}:{port} - {e}")
         return ""
 
 def guess_os(ttl):
@@ -66,8 +69,8 @@ def stealth_tcp_scan(ip, port, scan_type):
             return True
         if response.haslayer(TCP) and response.getlayer(TCP).flags == 0x14:
             return False
-    except:
-        pass
+    except Exception as e:
+        logging.error(f"Stealth scan error on {ip}:{port} - {e}")
     return None
 
 parser = argparse.ArgumentParser(description="NakulaScan - Elite Red Team Recon Platform")
@@ -136,7 +139,8 @@ def scan_target(ip):
     try:
         ans = sr1(IP(dst=ip)/ICMP(), timeout=1, verbose=0)
         os_guess = guess_os(ans.ttl if ans else 0)
-    except:
+    except Exception as e:
+        logging.error(f"ICMP probe failed for {ip} - {e}")
         os_guess = "Unknown"
 
     for port in ports:
@@ -172,7 +176,8 @@ def scan_target(ip):
                 })
             if resume_mgr and args.save:
                 resume_mgr.save()
-        except:
+        except Exception as e:
+            logging.error(f"Error scanning {ip}:{port} - {e}")
             continue
 
 threads = []
