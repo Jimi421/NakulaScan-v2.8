@@ -10,7 +10,7 @@ import ipaddress
 import logging
 from scapy.all import IP, TCP, ICMP, sr1, conf
 from plugin_loader import load_plugins
-from resumemanager import ResumeManager
+from resume_manager import ResumeManager
 from passive_recon import PassiveRecon
 from report_writer import generate_html_report, generate_md_report, generate_csv_report
 from cve_suggester import suggest_cves
