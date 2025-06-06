@@ -5,6 +5,7 @@ import threading
 import time
 import os
 import json
+import ipaddress
 from scapy.all import *
 from resumemanager import ResumeManager
 from passive_recon import PassiveRecon
@@ -72,6 +73,7 @@ def stealth_tcp_scan(ip, port, scan_type):
 parser = argparse.ArgumentParser(description="NakulaScan - Elite Red Team Recon Platform")
 parser.add_argument("-t", "--target", help="Target IP or hostname")
 parser.add_argument("-T", "--targetlist", help="File containing list of targets")
+parser.add_argument("-c", "--cidr", help="CIDR network range (e.g., 192.168.1.0/24)")
 parser.add_argument("-p", "--ports", choices=["common", "full"], default="common", help="Port set to scan")
 parser.add_argument("--scan", choices=["fin", "null", "xmas"], help="Stealth TCP scan mode")
 parser.add_argument("--passive", action="store_true", help="Perform passive OSINT recon only (no active scan)")
@@ -86,12 +88,20 @@ if not args.nobanner:
 codename = generate_codename()
 print(f"{CYAN}[+] Operator Codename: {codename}{RESET}")
 
+targets = []
+if args.cidr:
+    try:
+        net = ipaddress.ip_network(args.cidr, strict=False)
+        targets.extend([str(ip) for ip in net.hosts()])
+    except ValueError:
+        print(f"{RED}[-] Invalid CIDR: {args.cidr}{RESET}")
+        exit(1)
 if args.targetlist:
     with open(args.targetlist) as f:
-        targets = [l.strip() for l in f if l.strip()]
-elif args.target:
-    targets = [args.target]
-else:
+        targets.extend([l.strip() for l in f if l.strip()])
+if args.target:
+    targets.append(args.target)
+if not targets:
     print(f"{RED}[-] No targets specified.{RESET}")
     exit(1)
 
