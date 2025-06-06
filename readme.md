@@ -18,9 +18,13 @@ Perform active stealth scans, gather passive OSINT, and receive CVE suggestions 
 - ✅ Subdomain Resolution Support (Passive Mode)
 - ✅ CIDR Range Scanning
 - ✅ CSV Report Generation
-- ✅ UDP Scanning and Full Port Range
+- ✅ UDP Scanning with DNS/SNMP/NTP payloads and full port range
 - ✅ Plugin Architecture for Custom Checks
 - ✅ Asynchronous Thread Pool Scanning
+- ✅ Interactive mode when launched with no arguments
+- ✅ Quick-scan profiles for common scenarios
+- ✅ Automatic crash resume via `--auto-resume`
+- ✅ Debug logging to `debug.log`
 
 ---
 
@@ -28,37 +32,47 @@ Perform active stealth scans, gather passive OSINT, and receive CVE suggestions 
 
 ### Active Stealth Scan (XMAS):
 ```bash
-sudo python3 nakulascan.py -t 192.168.1.5 --scan xmas
+sudo python3 nakula.py -t 192.168.1.5 -S xmas
 ```
 
 ### Passive Recon Only:
 ```bash
-python3 nakulascan.py -t example.com --passive
+python3 nakula.py -t example.com --passive
 ```
 
 ### Scan From List:
 ```bash
-sudo python3 nakulascan.py -T examples/targets.txt --scan fin
+sudo python3 nakula.py -T targets.txt -S fin
 ```
 
 ### Scan a CIDR Range:
 ```bash
-sudo python3 nakulascan.py -c 192.168.1.0/24 --scan fin
+sudo python3 nakula.py -c 192.168.1.0/24 -S fin
 ```
 
 ### Per-Host Reports from CIDR Range:
 ```bash
-sudo python3 nakulascan.py -c 192.168.1.0/24 --scan fin --per-host
+sudo python3 nakula.py -c 192.168.1.0/24 -S fin --per-host
 ```
 
 ### Save + Resume a Scan:
 ```bash
-sudo python3 nakulascan.py -t scanme.nmap.org --scan null --save session.json
-sudo python3 nakulascan.py --resume session.json
+sudo python3 nakula.py -t scanme.nmap.org -S null --save session.json
+sudo python3 nakula.py --resume session.json
 ```
 ### UDP Scan Example:
 ```bash
-sudo python3 nakulascan.py -t 192.168.1.5 --udp
+sudo python3 nakula.py -t 192.168.1.5 -U
+```
+
+### Quick Profile (Webscan):
+```bash
+sudo python3 nakula.py -c 192.168.1.0/24 -F webscan
+```
+
+### Interactive Mode:
+```bash
+python3 nakula.py
 ```
 
 
