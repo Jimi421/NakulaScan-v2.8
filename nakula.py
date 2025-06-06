@@ -11,7 +11,13 @@ import json
 import ipaddress
 import logging
 import sys
-from scapy.all import IP, TCP, ICMP, sr1, conf
+import random
+
+from scapy.all import (
+    IP, TCP, UDP, ICMP, sr1, sr, conf,
+    RandShort, DNS, DNSQR, SNMP, SNMPvarbind, NTPHeader
+)
+
 from plugin_loader import load_plugins
 from resume_manager import ResumeManager
 from passive_recon import PassiveRecon
@@ -27,12 +33,12 @@ except ImportError:
 # ──▶ Silence Scapy verbosity
 conf.verb = 0
 
-# ──▶ Globals
+# ──▶ Color constants
 CYAN = "\033[96m"
 GREEN = "\033[92m"
 RESET = "\033[0m"
 
-# Common ports → service names (unchanged)
+# ──▶ Common ports → service names
 PORT_SERVICES = {
     21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS", 80: "HTTP", 110: "POP3", 111: "RPC",
     135: "MSRPC", 139: "NetBIOS", 143: "IMAP", 443: "HTTPS", 445: "SMB", 993: "IMAPS", 995: "POP3S",
@@ -45,65 +51,113 @@ plugin_data = []
 resume_mgr = None
 
 
-def group_results_by_host(data):
-    from collections import defaultdict
-    host_map = defaultdict(list)
-    for entry in data:
-        host_map[entry.get("ip")].append(entry)
-    return host_map
+def prompt_for_target_mode():
+    """
+    When no CLI args are provided, interactively prompt the user to choose a target mode.
+    """
+    print("\nNakulaScan Interactive Mode")
+    print("----------------------------")
+    print("1) Scan Single Host")
+    print("2) Scan CIDR Range")
+    print("3) Scan from File")
+    print("4) Quit")
+    choice = None
+    while choice not in ("1", "2", "3", "4"):
+        choice = input("Enter choice [1-4]: ").strip()
+    if choice == "4":
+        sys.exit(0)
+    if choice == "1":
+        host = input("Enter IP or hostname: ").strip()
+        return {"target": host}
+    elif choice == "2":
+        cidr = input("Enter CIDR (e.g. 192.168.1.0/24): ").strip()
+        return {"cidr": cidr}
+    else:
+        filepath = input("Enter path to target list file: ").strip()
+        return {"targetlist": filepath}
 
 
 def parse_args():
     """
-    Parse command-line arguments, including the new --debug flag.
+    Parse command-line arguments, including short aliases, defaults, profiles, and examples.
     """
-    parser = argparse.ArgumentParser(description="NakulaScan v2.8 Final — Red Team Scanner")
-    target_group = parser.add_mutually_exclusive_group(required=True)
-    target_group.add_argument("-t", "--target", help="Single target IP or hostname")
-    target_group.add_argument("-c", "--cidr", help="CIDR block (e.g. 10.0.0.0/24)")
-    target_group.add_argument("-T", "--targetlist", help="File containing list of targets")
+    parser = argparse.ArgumentParser(
+        description="NakulaScan v2.8 Final — Red Team Scanner",
+        epilog="""
+Quick Examples:
+  nakula -t 10.0.0.5
+      # TCP connect scan on common ports
+  nakula -t 10.0.0.5 -S fin -U
+      # FIN stealth scan + UDP on common ports
+  nakula -c 192.168.1.0/24 -F webscan
+      # Preset webscan (stealth FIN, common ports, plugins)
+  nakula -t 8.8.8.8 -F udpscan
+      # Preset udpscan (DNS/SNMP/NTP UDP + plugins)
+  nakula -c 10.0.0.0/24 -F fullscan
+      # Preset fullscan (TCP full 1–65535 + UDP + plugins)
+"""
+    )
+    target_group = parser.add_mutually_exclusive_group()
+    target_group.add_argument(
+        "-t", "--target", metavar="HOST",
+        help="Single target IP or hostname"
+    )
+    target_group.add_argument(
+        "-c", "--cidr", metavar="CIDR",
+        help="CIDR block (e.g. 192.168.1.0/24)"
+    )
+    target_group.add_argument(
+        "-T", "--targetlist", metavar="FILE",
+        help="File containing list of targets"
+    )
+
     parser.add_argument(
-        "--ports", choices=["common", "full"], default="common",
-        help="Port set to scan ('common' = typical services, 'full' = 1-65535)"
+        "-p", "--ports", choices=["common", "full"], default="common",
+        help="Port set to scan; default='common' (~20 well-known ports). Use 'full' to scan 1–65535."
     )
     parser.add_argument(
-        "--scan", choices=["fin", "null", "xmas"],
-        help="Stealth TCP scan mode (fin, null, xmas)"
+        "-S", "--scan", choices=["fin", "null", "xmas"],
+        help="Stealth TCP scan mode: fin, null, or xmas"
     )
+    parser.add_argument(
+        "-U", "--udp", action="store_true",
+        help="Enable UDP scanning (DNS/SNMP/NTP payloads)"
+    )
+    parser.add_argument(
+        "-P", "--enable-plugins", action="store_true",
+        help="Run plugins from the 'plugins' directory"
+    )
+    parser.add_argument(
+        "-N", "--nobanner", action="store_true",
+        help="Suppress ASCII banner at startup"
+    )
+    parser.add_argument(
+        "-D", "--debug", action="store_true",
+        help="Enable debug logging (write errors to debug.log)"
+    )
+    parser.add_argument(
+        "-F", "--profile", choices=["webscan", "udpscan", "fullscan"],
+        help="Quick-scan profiles: webscan, udpscan, fullscan"
+    )
+
+    # ──▶ Restore passive, save, resume, and auto-resume flags
     parser.add_argument(
         "--passive", action="store_true",
         help="Perform passive OSINT recon only (no active scan)"
     )
     parser.add_argument(
-        "--save", help="File path to save scan/resume state as JSON"
+        "--save", metavar="FILE",
+        help="File path to save scan/resume state as JSON"
     )
     parser.add_argument(
-        "--resume", help="File path to resume scan state from JSON"
-    )
-    parser.add_argument(
-        "--udp", action="store_true",
-        help="Enable UDP scanning in addition to TCP"
-    )
-    parser.add_argument(
-        "--enable-plugins", action="store_true",
-        help="Run plugins from the 'plugins' directory"
+        "--resume", metavar="FILE",
+        help="File path to resume scan state from JSON"
     )
     parser.add_argument(
         "--auto-resume", action="store_true",
         help="Automatically resume on crash using last save file"
     )
-    parser.add_argument(
-        "--nobanner", action="store_true",
-        help="Suppress ASCII banner at startup"
-    )
-    parser.add_argument(
-        "--debug", action="store_true",
-        help="Enable debug logging (write banner‐grab errors to debug.log)"
-    )
-    parser.add_argument(
-        "--per-host", action="store_true",
-        help="Generate individual reports per host when scanning multiple targets"
-    )
+
     return parser.parse_args()
 
 
@@ -122,34 +176,30 @@ def grab_banner(ip: str, port: int) -> str:
     Returns:
       - banner string (first line or Server header), or "" on timeout/failure
     """
-    # 1) HTTP (port 80)
+    # HTTP (80)
     if port == 80:
         try:
             http_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             http_sock.settimeout(3.0)
             http_sock.connect((ip, 80))
-            # Minimal HEAD request
             req = f"HEAD / HTTP/1.1\r\nHost: {ip}\r\nConnection: close\r\n\r\n"
             http_sock.sendall(req.encode())
             data = http_sock.recv(1024)
             http_sock.close()
             text = data.decode(errors="ignore")
-            # Try to extract "Server:" header
             match = re.search(r"Server:\s*(.+)", text, re.IGNORECASE)
             if match:
                 return match.group(1).strip()
-            # Otherwise return first status line
             first_line = text.split("\r\n")[0]
             return first_line.strip()
         except Exception as e:
             logging.error(f"[!] HTTP banner failed from {ip}:{port} – {e}")
             return ""
 
-    # 2) HTTPS (port 443) → SSL with SNI
+    # HTTPS (443)
     if port == 443:
         try:
             ctx = ssl.create_default_context()
-            # Use server_hostname=ip so SNI is sent
             with ctx.wrap_socket(
                 socket.socket(socket.AF_INET, socket.SOCK_STREAM),
                 server_hostname=ip
@@ -169,7 +219,7 @@ def grab_banner(ip: str, port: int) -> str:
             logging.error(f"[!] HTTPS banner failed from {ip}:{port} – {e}")
             return ""
 
-    # 3) Banner‐first protocols (FTP, SSH, Telnet, SMTP, POP3)
+    # Banner-first protocols (FTP, SSH, Telnet, SMTP, POP3)
     if port in (21, 22, 23, 25, 110, 587, 995):
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -179,10 +229,10 @@ def grab_banner(ip: str, port: int) -> str:
             s.close()
             return data.decode(errors="ignore").strip()
         except Exception as e:
-            logging.error(f"[!] Banner‐protocol failed from {ip}:{port} – {e}")
+            logging.error(f"[!] Banner-protocol failed from {ip}:{port} – {e}")
             return ""
 
-    # 4) Fallback: Generic TCP banner grab
+    # Fallback: generic TCP banner grab
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(2.0)
@@ -210,62 +260,199 @@ def guess_os(ttl: int) -> str:
         return "Unknown"
 
 
+def stealth_tcp_scan(ip, port, scan_type, retries=1):
+    """
+    Stealth TCP scan ("fin", "null", "xmas") with:
+      - Retries (default: 1 retry) on no response
+      - Adaptive TTL: random in [64..128]
+      - Random source port per probe (RandShort)
+    Returns:
+      True  → open or filtered (no RST seen within timeout)
+      False → closed (RST+ACK seen)
+      None  → error
+    """
+    flags_map = {"fin": "F", "null": "", "xmas": "FPU"}
+
+    if scan_type.lower() not in flags_map:
+        logging.error(f"[!] Unknown stealth scan type: {scan_type}")
+        return None
+
+    base_ttl = random.randint(64, 128)
+
+    for attempt in range(retries + 1):
+        try:
+            packet = IP(dst=ip, ttl=base_ttl) / TCP(
+                sport=RandShort(),
+                dport=port,
+                flags=flags_map[scan_type.lower()]
+            )
+            response = sr1(packet, timeout=1.5, verbose=0)
+
+            if response is None:
+                if attempt < retries:
+                    time.sleep(0.5 + random.random() * 0.5)
+                    continue
+                return True
+
+            if response.haslayer(TCP) and response.getlayer(TCP).flags == 0x14:
+                return False
+
+            if response.haslayer(TCP):
+                # Some other TCP response → treat as filtered/open
+                return True
+
+            if response.haslayer(ICMP):
+                icmp_layer = response.getlayer(ICMP)
+                if icmp_layer.type == 3 and icmp_layer.code in (1, 2, 3, 9, 10, 13):
+                    return False
+                return True
+
+        except Exception as e:
+            logging.error(f"[!] Stealth scan exception on {ip}:{port} - {e}")
+            return None
+
+    return None
+
+
+def udp_scan(ip, port, retries=1, service_payload=True):
+    """
+    Enhanced UDP scan:
+      - If service_payload=True, send protocol‐specific payloads for DNS(53), SNMP(161), NTP(123)
+      - Retries once on no response
+      - Distinguish closed (ICMP unreachable) vs open|filtered (no response)
+      - Fallback on an empty UDP packet
+    Returns:
+      True  → open or filtered (no ICMP unreachable after retries)
+      False → closed (ICMP type 3 unreachable)
+      None  → error
+    """
+    def send_and_recv(pkt, timeout=2.0):
+        return sr1(pkt, timeout=timeout, verbose=0)
+
+    for attempt in range(retries + 1):
+        try:
+            if service_payload and port == 53:
+                dns_pkt = IP(dst=ip) / UDP(sport=RandShort(), dport=53) / DNS(rd=1, qd=DNSQR(qname="example.com"))
+                resp = send_and_recv(dns_pkt, timeout=2.0)
+
+            elif service_payload and port == 161:
+                snmp_req = (
+                    IP(dst=ip) /
+                    UDP(sport=RandShort(), dport=161) /
+                    SNMP(community="public", PDU=SNMPvarbind(oid="1.3.6.1.2.1.1.1.0"))
+                )
+                resp = send_and_recv(snmp_req, timeout=2.5)
+
+            elif service_payload and port == 123:
+                ntp_req = (
+                    IP(dst=ip) /
+                    UDP(sport=RandShort(), dport=123) /
+                    NTPHeader()
+                )
+                resp = send_and_recv(ntp_req, timeout=2.5)
+
+            else:
+                pkt = IP(dst=ip) / UDP(sport=RandShort(), dport=port)
+                resp = send_and_recv(pkt, timeout=2.0)
+
+            if resp is None:
+                if attempt < retries:
+                    time.sleep(0.5 + random.random() * 0.5)
+                    continue
+                return True
+
+            if resp.haslayer(ICMP):
+                icmp_layer = resp.getlayer(ICMP)
+                if icmp_layer.type == 3 and icmp_layer.code in (1, 2, 3, 9, 10, 13):
+                    return False
+                return True
+
+            if resp.haslayer(UDP) or resp.haslayer(DNS) or resp.haslayer(SNMP) or resp.haslayer(NTPHeader):
+                return True
+
+            if resp.haslayer(TCP) and resp.getlayer(TCP).flags & 0x14 == 0x14:
+                return False
+
+            return True
+
+        except Exception as e:
+            logging.error(f"[!] UDP scan error on {ip}:{port} – {e}")
+            return None
+
+    return None
+
+
 def scan_target(ip: str):
     """
     For one IP:
       1. ICMP ping + TTL → guess OS
       2. For each port in PORT_SERVICES:
-         - Connect (TCP/UDP/stealth based on args)
+         - Choose scan method (stealth TCP, UDP, or TCP connect)
          - If open → banner grab, CVE suggest, fingerprint, plugins
-      3. Append results to global `results` and `plugin_data`
+      3. Append results to global lists
     """
     print(f"{CYAN}[+] Scanning {ip}...{RESET}")
     try:
-        pkt = IP(dst=ip) / ICMP()
-        resp = sr1(pkt, timeout=2, verbose=0)
+        resp = sr1(IP(dst=ip) / ICMP(), timeout=2, verbose=0)
         ttl = resp.ttl if resp else 0
         os_guess = guess_os(ttl)
     except:
         os_guess = "Unknown"
 
-    # If doing a resume, adjust ports accordingly (resume_mgr logic)
-    # … assume resume_mgr was initialized in main() …
-    # ports_to_scan = PORT_SERVICES.keys() or trimmed by resume_mgr
-    for port in PORT_SERVICES:
-        try:
-            # 1) Determine if port is open
-            if args.passive:
-                is_open = False
-            elif args.scan:
-                # Example stealth scan (fin/null/xmas) – placeholder
-                is_open = stealth_tcp_scan(ip, port, args.scan)  # assume this function exists
-            elif args.udp:
-                is_open = udp_scan(ip, port)  # assume this function exists
-            else:
-                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.settimeout(0.5)
-                is_open = (s.connect_ex((ip, port)) == 0)
-                s.close()
+    # Determine port list based on args.ports
+    if args.ports == "common":
+        ports_to_scan = list(PORT_SERVICES.keys())
+    else:
+        ports_to_scan = list(range(1, 65536))
 
-            if not is_open:
+    if resume_mgr:
+        _, ports_to_scan = resume_mgr.get_state([ip], ports_to_scan)
+
+    for port in ports_to_scan:
+        try:
+            if args.passive:
                 continue
 
+            elif args.scan:
+                is_open = stealth_tcp_scan(ip, port, args.scan, retries=1)
+                if is_open is None or not is_open:
+                    continue
+
+            elif args.udp:
+                is_open = udp_scan(ip, port, retries=1, service_payload=True)
+                if is_open is None or not is_open:
+                    continue
+
+            else:
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    s.settimeout(0.75)
+                    is_open = (s.connect_ex((ip, port)) == 0)
+                    s.close()
+                except:
+                    continue
+                if not is_open:
+                    continue
+
+            # Port is open (or open|filtered). Now do banner, CVE, fingerprint, plugins:
             service = PORT_SERVICES.get(port, "Unknown")
-            # 2) Grab banner using new protocol-aware function
             banner = grab_banner(ip, port)
-            # 3) Suggest CVEs based on banner
             cves = suggest_cves(banner)
 
-            # 4) Fingerprint (if available)
+            # ──▶ FIXED: Always embed fingerprint details under port key
             fingerprint = {}
             if fingerprint_services:
                 try:
-                    fingerprint = fingerprint_services(ip, [port]).get(port, {})
+                    raw_fp = fingerprint_services(ip, [port]).get(port, {})
+                    # Only wrap it if raw_fp is a non-empty dict
+                    if isinstance(raw_fp, dict) and raw_fp:
+                        fingerprint = {port: raw_fp}
+                    else:
+                        fingerprint = {}
                 except Exception as e:
                     logging.error(f"[!] Fingerprint error on {ip}:{port} - {e}")
                     fingerprint = {}
 
-            # 5) Print and save result
             print(f"{GREEN}[+] {ip}:{port} OPEN ({service}){RESET}")
             results.append({
                 "ip": ip,
@@ -277,7 +464,6 @@ def scan_target(ip: str):
                 "fingerprint": fingerprint
             })
 
-            # 6) Run all plugins (pass ip, port, banner)
             for plugin in plugins:
                 try:
                     pdata = plugin.run(ip, port, banner)
@@ -286,15 +472,12 @@ def scan_target(ip: str):
                 except Exception as e:
                     logging.error(f"[!] Plugin error on {ip}:{port} - {e}")
 
-            # 7) If using resume, mark this port as scanned
             if resume_mgr and args.save:
                 resume_mgr.mark_scanned(ip, port)
 
         except Exception as e:
-            logging.error(f"[!] Socket error on {ip}:{port} - {e}")
+            logging.error(f"[!] Scan exception on {ip}:{port} - {e}")
             continue
-
-    # End of scan_target()
 
 
 def expand_targets(args) -> list:
@@ -330,9 +513,38 @@ def expand_targets(args) -> list:
 def main():
     global args, plugins, resume_mgr
 
+    # 1) If no args given, run interactive prompt to choose target mode
+    if len(sys.argv) == 1:
+        forced = prompt_for_target_mode()
+        if "target" in forced:
+            sys.argv.extend(["-t", forced["target"]])
+        elif "cidr" in forced:
+            sys.argv.extend(["-c", forced["cidr"]])
+        else:
+            sys.argv.extend(["-T", forced["targetlist"]])
+
+    # 2) Parse arguments (with short aliases, defaults, profiles)
     args = parse_args()
 
-    # 1) Configure logging (debug to file if requested)
+    # 3) Apply profile presets (overridable by explicit flags)
+    if args.profile:
+        if args.profile == "webscan":
+            args.scan = args.scan or "fin"
+            args.udp = args.udp or False
+            args.ports = args.ports or "common"
+            args.enable_plugins = True
+        elif args.profile == "udpscan":
+            args.scan = None
+            args.udp = True
+            args.ports = "common"
+            args.enable_plugins = True
+        elif args.profile == "fullscan":
+            args.scan = args.scan or "null"
+            args.udp = True
+            args.ports = "full"
+            args.enable_plugins = True
+
+    # 4) Configure logging (debug to file if requested)
     if args.debug:
         logging.basicConfig(
             filename="debug.log",
@@ -343,7 +555,7 @@ def main():
     else:
         logging.basicConfig(level=logging.ERROR)
 
-    # 2) Print ASCII banner (unless suppressed)
+    # 5) Print ASCII banner (unless suppressed)
     if not args.nobanner:
         print(rf"""{CYAN}
 ███╗   ██╗ █████╗ ██╗  ██╗██╗   ██╗██╗      █████╗ 
@@ -351,84 +563,60 @@ def main():
 ██╔██╗ ██║███████║█████╔╝ ██║   ██║██║     ███████║
 ██║╚██╗██║██╔══██║██╔═██╗ ██║   ██║██║     ██╔══██║
 ██║ ╚████║██║  ██║██║  ██╗╚██████╔╝███████╗██║  ██║
-╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝
+╚═╝  ╚═══╝╝═╝  ╝═╝╝═╝  ╝═╝ ╝═════╝ ╝══════╝╝═╝  ╝═╝
 
     ॐ   (Om – Sacred Operator Mind)
 {RESET}
 """)
 
-    # 3) Expand targets
+    # 6) Expand targets
     targets = expand_targets(args)
 
-    # 4) Initialize resume manager if requested
+    # 7) Initialize resume manager if requested
     resume_mgr = None
     if args.resume or args.auto_resume:
-        # Use specified file or default autosave.json
         resume_file = args.resume if args.resume else "autosave.json"
         resume_mgr = ResumeManager(resume_file)
         resume_mgr.load()
 
-    # 5) Load plugins if enabled
+    # 8) Load plugins if enabled
     plugins = load_plugins() if args.enable_plugins else []
 
-    # 6) Determine ports to scan (common vs full)
-    port_list = list(PORT_SERVICES.keys()) if args.ports == "common" else list(range(1, 65536))
-    if resume_mgr:
-        # Filter out already-scanned ports/IPs if resuming
-        targets, port_list = resume_mgr.get_state(targets, port_list)
-
-    # 7) Passive recon only?
+    # 9) Passive recon only?
     if args.passive:
         pr = PassiveRecon(targets)
         pr.run()
         sys.exit(0)
 
-    # 8) Stage 1: ThreadPoolExecutor for parallel scanning
+    # 10) Stage 1: ThreadPoolExecutor for parallel scanning
     with concurrent.futures.ThreadPoolExecutor(max_workers=100) as scan_pool:
-        # Each thread runs scan_target() which scans all ports in PORT_SERVICES
         scan_pool.map(scan_target, targets)
 
-    # 9) Write JSON results
+    # 11) Write JSON results
     os.makedirs("reports", exist_ok=True)
-    with open("reports/active_results.json", "w") as af:
-        json.dump(results, af, indent=4)
+    try:
+        with open("reports/active_results.json", "w") as af:
+            json.dump(results, af, indent=4)
+    except PermissionError:
+        print(f"{CYAN}[!] ERROR: Cannot write to reports/active_results.json — permission denied.{RESET}")
+        print(f"{CYAN}    Try: sudo rm reports/active_results.json or run as sudo.{RESET}")
+        sys.exit(1)
 
-    # 10) Write plugin data if any
+    # 12) Write plugin data if any
     if plugin_data:
         with open("reports/plugin_results.json", "w") as pf:
             json.dump(plugin_data, pf, indent=4)
 
     print(f"\n{CYAN}[+] Active scan complete. Results saved to reports/active_results.json{RESET}")
 
-    if not results:
-        return
-
-    host_map = group_results_by_host(results)
-
-    if len(targets) == 1 and args.target:
-        # Single target behaviour remains the same
+    # 13) If a single target was specified, also produce HTML/MD/CSV reports
+    if results and args.target:
         html_path = generate_html_report(results, args.target, codename=None)
         print(f"{CYAN}[+] HTML report written to {html_path}{RESET}")
         md_path = generate_md_report(results, args.target, codename=None)
         print(f"{CYAN}[+] Markdown report written to {md_path}{RESET}")
         csv_path = generate_csv_report(results, args.target, codename=None)
         print(f"{CYAN}[+] CSV report written to {csv_path}{RESET}")
-    else:
-        if args.per_host:
-            for host, entries in host_map.items():
-                html_path = generate_html_report(entries, host, codename=None)
-                print(f"{CYAN}[+] HTML report for {host} written to {html_path}{RESET}")
-                md_path = generate_md_report(entries, host, codename=None)
-                print(f"{CYAN}[+] Markdown report for {host} written to {md_path}{RESET}")
-                csv_path = generate_csv_report(entries, host, codename=None)
-                print(f"{CYAN}[+] CSV report for {host} written to {csv_path}{RESET}")
-        else:
-            html_path = generate_html_report(results, "summary", codename=None)
-            print(f"{CYAN}[+] HTML summary written to {html_path}{RESET}")
-            md_path = generate_md_report(results, "summary", codename=None)
-            print(f"{CYAN}[+] Markdown summary written to {md_path}{RESET}")
-            csv_path = generate_csv_report(results, "summary", codename=None)
-            print(f"{CYAN}[+] CSV summary written to {csv_path}{RESET}")
 
 
 if __name__ == "__main__":
