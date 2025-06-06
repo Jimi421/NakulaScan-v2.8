@@ -45,6 +45,11 @@ sudo python3 nakulascan.py -T examples/targets.txt --scan fin
 sudo python3 nakulascan.py -c 192.168.1.0/24 --scan fin
 ```
 
+### Per-Host Reports from CIDR Range:
+```bash
+sudo python3 nakulascan.py -c 192.168.1.0/24 --scan fin --per-host
+```
+
 ### Save + Resume a Scan:
 ```bash
 sudo python3 nakulascan.py -t scanme.nmap.org --scan null --save session.json
@@ -65,6 +70,8 @@ sudo python3 nakulascan.py -t 192.168.1.5 --udp
 - `reports/NakulaScan_<target>_<timestamp>.html`
 - `reports/NakulaScan_<target>_<timestamp>.csv`
 - `reports/NakulaScan_<target>_<timestamp>.md`
+- `reports/NakulaScan_summary_<timestamp>.*` for multi-target scans
+- `reports/NakulaScan_<ip>_<timestamp>.*` when using `--per-host`
 
 
 ## 🔍 CVE Matching Logic
