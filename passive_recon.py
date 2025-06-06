@@ -2,8 +2,6 @@
 
 import socket
 import whois
-import requests
-import json
 from ipwhois import IPWhois
 
 class PassiveRecon:

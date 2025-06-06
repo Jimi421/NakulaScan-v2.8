@@ -101,7 +101,7 @@ if args.cidr:
         exit(1)
 if args.targetlist:
     with open(args.targetlist) as f:
-        targets.extend([l.strip() for l in f if l.strip()])
+        targets.extend([line.strip() for line in f if line.strip()])
 if args.target:
     targets.append(args.target)
 if not targets:
