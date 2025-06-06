@@ -1,0 +1,4 @@
+scapy
+python-whois
+ipwhois
+requests
