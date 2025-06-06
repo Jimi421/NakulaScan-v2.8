@@ -1,6 +1,5 @@
 # NakulaScan - Report Writer
 
-import os
 import datetime
 from pathlib import Path
 
@@ -75,7 +74,7 @@ def generate_md_report(data, target, codename):
     Path("reports").mkdir(exist_ok=True)
 
     lines = [
-        f"# NakulaScan Report\n",
+        "# NakulaScan Report\n",
         f"**Target:** {target}\n",
         f"**Codename:** {codename}\n",
         f"**Date:** {timestamp}\n\n",
