@@ -45,6 +45,14 @@ plugin_data = []
 resume_mgr = None
 
 
+def group_results_by_host(data):
+    from collections import defaultdict
+    host_map = defaultdict(list)
+    for entry in data:
+        host_map[entry.get("ip")].append(entry)
+    return host_map
+
+
 def parse_args():
     """
     Parse command-line arguments, including the new --debug flag.
@@ -91,6 +99,10 @@ def parse_args():
     parser.add_argument(
         "--debug", action="store_true",
         help="Enable debug logging (write banner‐grab errors to debug.log)"
+    )
+    parser.add_argument(
+        "--per-host", action="store_true",
+        help="Generate individual reports per host when scanning multiple targets"
     )
     return parser.parse_args()
 
@@ -388,14 +400,35 @@ def main():
 
     print(f"\n{CYAN}[+] Active scan complete. Results saved to reports/active_results.json{RESET}")
 
-    # 11) If a single target was specified, also produce HTML/MD/CSV reports
-    if results and args.target:
+    if not results:
+        return
+
+    host_map = group_results_by_host(results)
+
+    if len(targets) == 1 and args.target:
+        # Single target behaviour remains the same
         html_path = generate_html_report(results, args.target, codename=None)
         print(f"{CYAN}[+] HTML report written to {html_path}{RESET}")
         md_path = generate_md_report(results, args.target, codename=None)
         print(f"{CYAN}[+] Markdown report written to {md_path}{RESET}")
         csv_path = generate_csv_report(results, args.target, codename=None)
         print(f"{CYAN}[+] CSV report written to {csv_path}{RESET}")
+    else:
+        if args.per_host:
+            for host, entries in host_map.items():
+                html_path = generate_html_report(entries, host, codename=None)
+                print(f"{CYAN}[+] HTML report for {host} written to {html_path}{RESET}")
+                md_path = generate_md_report(entries, host, codename=None)
+                print(f"{CYAN}[+] Markdown report for {host} written to {md_path}{RESET}")
+                csv_path = generate_csv_report(entries, host, codename=None)
+                print(f"{CYAN}[+] CSV report for {host} written to {csv_path}{RESET}")
+        else:
+            html_path = generate_html_report(results, "summary", codename=None)
+            print(f"{CYAN}[+] HTML summary written to {html_path}{RESET}")
+            md_path = generate_md_report(results, "summary", codename=None)
+            print(f"{CYAN}[+] Markdown summary written to {md_path}{RESET}")
+            csv_path = generate_csv_report(results, "summary", codename=None)
+            print(f"{CYAN}[+] CSV summary written to {csv_path}{RESET}")
 
 
 if __name__ == "__main__":
