@@ -34,4 +34,5 @@ class ResumeManager:
             remaining_ports = [p for p in ports if p not in already_scanned]
             if remaining_ports:
                 filtered_targets.append(ip)
+                filtered_ports = remaining_ports
         return filtered_targets, filtered_ports
