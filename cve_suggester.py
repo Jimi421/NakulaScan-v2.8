@@ -6,8 +6,12 @@ cve_db = {
     "nginx/1.18.0": ["CVE-2021-23017"],
     "vsFTPd 2.3.4": ["CVE-2011-2523"],
     "ProFTPD 1.3.5": ["CVE-2015-3306"],
-    "Exim 4.92": ["CVE-2019-10149"]
+    "Exim 4.92": ["CVE-2019-10149"],
+    "MySQL 5.7": ["CVE-2016-6662"],
+    "Microsoft IIS 7.5": ["CVE-2017-7269"],
+    "PHP/5.6": ["CVE-2019-11043"],
 }
+
 
 def suggest_cves(banner):
     matches = []

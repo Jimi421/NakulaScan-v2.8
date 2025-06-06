@@ -16,6 +16,10 @@ Perform active stealth scans, gather passive OSINT, and receive CVE suggestions 
 - ✅ Clean HTML + Markdown Report Generation
 - ✅ Subdomain Resolution Support (Passive Mode)
 - ✅ CIDR Range Scanning
+- ✅ CSV Report Generation
+- ✅ UDP Scanning and Full Port Range
+- ✅ Plugin Architecture for Custom Checks
+- ✅ Asynchronous Thread Pool Scanning
 
 ---
 
@@ -46,6 +50,11 @@ sudo python3 nakulascan.py -c 192.168.1.0/24 --scan fin
 sudo python3 nakulascan.py -t scanme.nmap.org --scan null --save session.json
 sudo python3 nakulascan.py --resume session.json
 ```
+### UDP Scan Example:
+```bash
+sudo python3 nakulascan.py -t 192.168.1.5 --udp
+```
+
 
 ---
 
@@ -54,9 +63,9 @@ sudo python3 nakulascan.py --resume session.json
 - `reports/active_results.json`
 - `reports/passive_results.json`
 - `reports/NakulaScan_<target>_<timestamp>.html`
+- `reports/NakulaScan_<target>_<timestamp>.csv`
 - `reports/NakulaScan_<target>_<timestamp>.md`
 
----
 
 ## 🔍 CVE Matching Logic
 Matches banners to known CVE patterns locally, with no internet required. Add new entries in `cve_suggester.py` to expand the database.
